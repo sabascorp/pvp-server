@@ -4,14 +4,12 @@ const { Server } = require('socket.io');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, {
-    cors: { origin: '*' }
-});
+const io = new Server(server, { cors: { origin: '*' } });
 
 const PORT = process.env.PORT || 3000;
 
 const rooms = {}; 
-// rooms = { roomId: { players: [{id: socketId, name: 'Usuario'}], ready: {socketId: true/false} } }
+// rooms = { roomId: { players: [{id: socketId, name}], ready: {socketId: true/false} } }
 
 io.on('connection', (socket) => {
 
@@ -30,13 +28,13 @@ io.on('connection', (socket) => {
     });
 
     socket.on('playerReady', ({ room }) => {
-        if (rooms[room]) {
-            rooms[room].ready[socket.id] = true;
+        if (!rooms[room]) return;
+        rooms[room].ready[socket.id] = true;
 
-            const allReady = rooms[room].players.every(p => rooms[room].ready[p.id]);
-            if (allReady) {
-                io.to(room).emit('startGame', { message: '¡Partida iniciada!' });
-            }
+        const allReady = rooms[room].players.every(p => rooms[room].ready[p.id]);
+        if (allReady) {
+            // Avisar a ambos jugadores que inicien el conteo de 5 segundos
+            io.to(room).emit('startCountdown', { message: '¡Ambos jugadores listos! Iniciando en 5 segundos...' });
         }
     });
 
