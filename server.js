@@ -11,17 +11,17 @@ const io = new Server(server, {
 const PORT = process.env.PORT || 3000;
 
 const rooms = {}; 
-// rooms = { roomId: { players: [{id: socketId, name: 'Usuario'}], ready: {socketId: true/false}, reset: {socketId: true/false} } }
+// rooms = { roomId: { players: [{id: socketId, name: 'Usuario'}], ready: {socketId: true/false} } }
 
 io.on('connection', (socket) => {
 
     socket.on('joinRoom', ({ room, userName }) => {
         socket.join(room);
-        if (!rooms[room]) rooms[room] = { players: [], ready: {}, reset: {} };
+        if (!rooms[room]) rooms[room] = { players: [], ready: {} };
         rooms[room].players.push({ id: socket.id, name: userName });
         rooms[room].ready[socket.id] = false;
-        rooms[room].reset[socket.id] = false;
 
+        // Avisar a los jugadores
         if (rooms[room].players.length === 2) {
             io.to(room).emit('waiting', { message: 'Ambos jugadores conectados. Esperando que estén listos...' });
         } else {
@@ -33,27 +33,22 @@ io.on('connection', (socket) => {
         if (rooms[room]) {
             rooms[room].ready[socket.id] = true;
 
+            // Comprobar si ambos están listos
             const allReady = rooms[room].players.every(p => rooms[room].ready[p.id]);
             if (allReady) {
-                io.to(room).emit('startCountdown', { message: '¡Comienza la cuenta regresiva de 5 segundos!' });
-            }
-        }
-    });
+                // Emitir conteo sincronizado a ambos jugadores
+                io.to(room).emit('startCountdown', { message: '¡Ambos listos! Inicia el conteo...' });
 
-    socket.on('playerReset', ({ room }) => {
-        if (rooms[room]) {
-            rooms[room].reset[socket.id] = true;
-            rooms[room].ready[socket.id] = false; // Resetear el ready para la nueva partida
-
-            const allReset = rooms[room].players.every(p => rooms[room].reset[p.id]);
-            if (allReset) {
-                // Avisar a ambos jugadores que pueden volver a presionar "Iniciar"
-                io.to(room).emit('resetComplete', { message: 'Ambos jugadores listos para reiniciar. Pulsa Iniciar nuevamente.' });
+                // Reiniciar los ready para la siguiente partida
+                for (const id in rooms[room].ready) {
+                    rooms[room].ready[id] = false;
+                }
             }
         }
     });
 
     socket.on('updateStats', (data) => {
+        // Enviar stats solo al rival
         socket.to(data.room).emit('opponentStats', { stats: data.stats, name: data.name });
     });
 
@@ -61,7 +56,6 @@ io.on('connection', (socket) => {
         for (const room in rooms) {
             rooms[room].players = rooms[room].players.filter(p => p.id !== socket.id);
             delete rooms[room].ready[socket.id];
-            delete rooms[room].reset[socket.id];
         }
     });
 
