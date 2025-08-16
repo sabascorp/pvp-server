@@ -11,7 +11,7 @@ const io = new Server(server, {
 const PORT = process.env.PORT || 3000;
 
 const rooms = {}; 
-// rooms = { roomId: { players: [{id: socketId, name: 'Usuario'}], ready: {socketId: true/false} } }
+// rooms = { roomId: { players: [{id: socketId, name: 'Usuario', finalStats}], ready: {socketId: true/false} } }
 
 io.on('connection', (socket) => {
 
@@ -21,7 +21,6 @@ io.on('connection', (socket) => {
         rooms[room].players.push({ id: socket.id, name: userName });
         rooms[room].ready[socket.id] = false;
 
-        // Avisar a los jugadores
         if (rooms[room].players.length === 2) {
             io.to(room).emit('waiting', { message: 'Ambos jugadores conectados. Esperando que estén listos...' });
         } else {
@@ -32,23 +31,39 @@ io.on('connection', (socket) => {
     socket.on('playerReady', ({ room }) => {
         if (rooms[room]) {
             rooms[room].ready[socket.id] = true;
-
-            // Comprobar si ambos están listos
             const allReady = rooms[room].players.every(p => rooms[room].ready[p.id]);
             if (allReady) {
                 io.to(room).emit('startCountdown', { message: '¡Ambos listos! Inicia el conteo...' });
-
-                // Reiniciar los ready para la siguiente partida
-                for (const id in rooms[room].ready) {
-                    rooms[room].ready[id] = false;
-                }
+                for (const id in rooms[room].ready) rooms[room].ready[id] = false;
             }
         }
     });
 
     socket.on('updateStats', (data) => {
-        // Enviar stats solo al rival
         socket.to(data.room).emit('opponentStats', { stats: data.stats, name: data.name });
+    });
+
+    // NUEVO: recibir stats finales de cada jugador
+    socket.on('finishPractice', ({ room, stats }) => {
+        if (!rooms[room]) return;
+        const player = rooms[room].players.find(p => p.id === socket.id);
+        if (!player) return;
+
+        player.finalStats = stats;
+
+        // Si ambos terminaron, calcular ganador
+        if (rooms[room].players.every(p => p.finalStats)) {
+            const [p1, p2] = rooms[room].players;
+            let winner = null;
+            if (p1.finalStats.correct > p2.finalStats.correct) winner = p1.name;
+            else if (p2.finalStats.correct > p1.finalStats.correct) winner = p2.name;
+            else winner = 'Empate';
+
+            io.to(room).emit('gameOver', { winner, stats: { [p1.name]: p1.finalStats, [p2.name]: p2.finalStats } });
+
+            // Limpiar para próxima partida
+            rooms[room].players.forEach(p => delete p.finalStats);
+        }
     });
 
     socket.on('disconnect', () => {
@@ -56,14 +71,9 @@ io.on('connection', (socket) => {
             const roomData = rooms[room];
             const player = roomData.players.find(p => p.id === socket.id);
             if (player) {
-                // Quitar al jugador
                 roomData.players = roomData.players.filter(p => p.id !== socket.id);
                 delete roomData.ready[socket.id];
-
-                // Avisar a los demás jugadores
                 socket.to(room).emit('opponentLeft', { message: `${player.name} se ha desconectado.` });
-
-                // Eliminar la sala si quedó vacía
                 if (roomData.players.length === 0) delete rooms[room];
             }
         }
@@ -74,5 +84,3 @@ io.on('connection', (socket) => {
 server.listen(PORT, () => {
     console.log(`Servidor PVP corriendo en puerto ${PORT}`);
 });
-
-
