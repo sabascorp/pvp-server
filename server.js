@@ -60,4 +60,25 @@ io.on('connection', (socket) => {
 
     // Manejar desconexión
     socket.on('disconnect', () => {
-        console.log(`Jugador desconectado:
+        console.log(`Jugador desconectado: ${socket.id}`);
+
+        // Quitar de cola si estaba esperando
+        waitingPlayers = waitingPlayers.filter(id => id !== socket.id);
+
+        // Buscar si estaba en alguna sala
+        for (const room in rooms) {
+            const { player1, player2 } = rooms[room];
+            if (player1 === socket.id || player2 === socket.id) {
+                const rivalId = player1 === socket.id ? player2 : player1;
+                io.to(rivalId).emit('opponentDisconnected', { message: 'Tu rival se desconectó.' });
+                delete rooms[room];
+                break;
+            }
+        }
+    });
+});
+
+server.listen(PORT, () => {
+    console.log(`Servidor PVP corriendo en el puerto ${PORT}`);
+});
+
