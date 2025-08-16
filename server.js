@@ -7,78 +7,84 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
     cors: {
-        origin: '*', // Permitir cualquier origen por simplicidad
-        methods: ['GET', 'POST']
+        origin: "*", // Ajusta según tu dominio en producción
+        methods: ["GET", "POST"]
     }
 });
 
 const PORT = process.env.PORT || 3000;
 
-let waitingPlayers = []; // Cola de espera de jugadores
+// Cola de jugadores esperando
+let waitingPlayers = [];
 
-// Map de room -> { player1, player2 }
+// Guardar la info de cada sala
 let rooms = {};
 
 io.on('connection', (socket) => {
-    console.log(`Jugador conectado: ${socket.id}`);
+    console.log(`Nuevo jugador conectado: ${socket.id}`);
 
-    // Añadir a la cola
-    waitingPlayers.push(socket.id);
+    socket.on('joinPVP', (data) => {
+        const username = data.username;
+        socket.username = username;
 
-    // Si hay al menos dos jugadores, emparejarlos
-    if (waitingPlayers.length >= 2) {
-        const player1 = waitingPlayers.shift();
-        const player2 = waitingPlayers.shift();
-        const room = `room-${Date.now()}`;
+        if (waitingPlayers.length > 0) {
+            // Emparejar con el primer jugador en la cola
+            const opponentSocket = waitingPlayers.shift();
+            const roomName = `room-${socket.id}-${opponentSocket.id}`;
 
-        rooms[room] = { player1, player2 };
+            // Guardar la info de la sala
+            rooms[roomName] = {
+                players: [socket.id, opponentSocket.id],
+                usernames: [username, opponentSocket.username]
+            };
 
-        // Unir a cada jugador a la sala
-        io.sockets.sockets.get(player1).join(room);
-        io.sockets.sockets.get(player2).join(room);
+            // Unirse a la sala
+            socket.join(roomName);
+            opponentSocket.join(roomName);
 
-        // Avisar a cada jugador que la partida inicia
-        io.to(player1).emit('start', { room, message: '¡Partida iniciada! Tienes un rival.' });
-        io.to(player2).emit('start', { room, message: '¡Partida iniciada! Tienes un rival.' });
-    } else {
-        // Si no hay rival, avisar que está en espera
-        socket.emit('waiting', { message: 'Esperando contrincante...' });
-    }
+            // Notificar a ambos jugadores
+            socket.emit('start', { room: roomName, opponent: opponentSocket.username, message: 'Partida iniciada' });
+            opponentSocket.emit('start', { room: roomName, opponent: username, message: 'Partida iniciada' });
 
-    // Escuchar estadísticas de un jugador y enviarlas al rival
+            console.log(`Sala creada: ${roomName} entre ${username} y ${opponentSocket.username}`);
+        } else {
+            // No hay jugador esperando, se agrega a la cola
+            waitingPlayers.push(socket);
+            socket.emit('waiting', { message: 'Esperando un contrincante...' });
+        }
+    });
+
     socket.on('updateStats', (data) => {
-        const room = data.room;
-        if (!rooms[room]) return;
+        const roomName = data.room;
+        if (!rooms[roomName]) return;
 
-        const { player1, player2 } = rooms[room];
-        const rivalId = socket.id === player1 ? player2 : player1;
-
-        io.to(rivalId).emit('opponentStats', {
-            stats: data.stats
+        // Enviar stats al otro jugador
+        rooms[roomName].players.forEach(playerId => {
+            if (playerId !== socket.id) {
+                io.to(playerId).emit('opponentStats', { stats: data.stats });
+            }
         });
     });
 
-    // Manejar desconexión
     socket.on('disconnect', () => {
         console.log(`Jugador desconectado: ${socket.id}`);
+        // Quitar de la cola si estaba esperando
+        waitingPlayers = waitingPlayers.filter(p => p.id !== socket.id);
 
-        // Quitar de cola si estaba esperando
-        waitingPlayers = waitingPlayers.filter(id => id !== socket.id);
-
-        // Buscar si estaba en alguna sala
-        for (const room in rooms) {
-            const { player1, player2 } = rooms[room];
-            if (player1 === socket.id || player2 === socket.id) {
-                const rivalId = player1 === socket.id ? player2 : player1;
-                io.to(rivalId).emit('opponentDisconnected', { message: 'Tu rival se desconectó.' });
-                delete rooms[room];
-                break;
+        // Notificar a los jugadores de su sala si estaban en una
+        for (const roomName in rooms) {
+            if (rooms[roomName].players.includes(socket.id)) {
+                rooms[roomName].players.forEach(playerId => {
+                    if (playerId !== socket.id) {
+                        io.to(playerId).emit('opponentStats', { stats: { correct: 0, wrong: 0, attempts: 0, effectiveness: 0 }, message: 'Tu rival se desconectó.' });
+                    }
+                });
+                delete rooms[roomName];
             }
         }
     });
 });
 
 server.listen(PORT, () => {
-    console.log(`Servidor PVP corriendo en el puerto ${PORT}`);
+    console.log(`Servidor PVP escuchando en puerto ${PORT}`);
 });
-
