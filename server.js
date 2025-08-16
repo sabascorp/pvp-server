@@ -5,89 +5,81 @@ const { Server } = require('socket.io');
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
-    cors: { origin: '*' }
+    cors: {
+        origin: "*"
+    }
 });
 
-const PORT = process.env.PORT || 3000;
-
-/**
- * rooms = {
- *   roomId: {
- *     players: [{ id: socketId, name: 'Usuario' }],
- *     ready: { socketId: true/false }
- *   }
- * }
- */
 const rooms = {};
 
 io.on('connection', (socket) => {
-    // Unirse a una sala con nombre de usuario
-    socket.on('joinRoom', ({ room, userName }) => {
+    console.log('Un jugador se ha conectado:', socket.id);
+
+    socket.on('joinRoom', ({ room, name }) => {
         socket.join(room);
 
-        if (!rooms[room]) rooms[room] = { players: [], ready: {} };
-        rooms[room].players.push({ id: socket.id, name: userName });
-        rooms[room].ready[socket.id] = false;
+        if (!rooms[room]) {
+            rooms[room] = { players: [], readyCount: 0 };
+        }
 
+        rooms[room].players.push({ id: socket.id, name });
         const numPlayers = rooms[room].players.length;
 
         if (numPlayers === 2) {
-            // Avisar rival a cada uno INMEDIATAMENTE
+            // Ambos jugadores conectados → enviar info de rival de inmediato
             const [p1, p2] = rooms[room].players;
             io.to(p1.id).emit('opponentInfo', { opponent: p2.name });
             io.to(p2.id).emit('opponentInfo', { opponent: p1.name });
 
-            // Mensaje de estado
+            // Mensaje de espera hasta que ambos den iniciar
             io.to(room).emit('waiting', { message: 'Ambos jugadores conectados. Esperando que estén listos...' });
         } else {
             io.to(socket.id).emit('waiting', { message: 'Esperando contrincante...' });
         }
     });
 
-    // Jugador marca "listo"
-    socket.on('playerReady', ({ room }) => {
+    socket.on('ready', ({ room }) => {
         if (!rooms[room]) return;
 
-        rooms[room].ready[socket.id] = true;
+        rooms[room].readyCount++;
 
-        // ¿Están ambos listos?
-        const allReady =
-            rooms[room].players.length === 2 &&
-            rooms[room].players.every(p => rooms[room].ready[p.id]);
+        if (rooms[room].readyCount === 2) {
+            let countdown = 3;
+            const countdownInterval = setInterval(() => {
+                io.to(room).emit('countdown', { countdown });
+                countdown--;
 
-        // Cuando ambos estén listos, se dispara la cuenta regresiva sincronizada
-        if (allReady) {
-            io.to(room).emit('startCountdown', { seconds: 5 });
+                if (countdown < 0) {
+                    clearInterval(countdownInterval);
+                    io.to(room).emit('startGame', { message: '¡Comienza el juego!' });
+                }
+            }, 1000);
         }
     });
 
-    // Stats de un jugador: reenviar solo al rival
-    socket.on('updateStats', (data) => {
-        // data = { room, name, stats }
-        socket.to(data.room).emit('opponentStats', { name: data.name, stats: data.stats });
+    socket.on('playerAnswer', ({ room, player, answer }) => {
+        socket.to(room).emit('opponentAnswer', { player, answer });
     });
 
-    // Limpieza al desconectar
+    socket.on('statsUpdate', ({ room, stats }) => {
+        socket.to(room).emit('opponentStats', { stats });
+    });
+
     socket.on('disconnect', () => {
+        console.log('Jugador desconectado:', socket.id);
+
         for (const room in rooms) {
-            const r = rooms[room];
-            if (!r) continue;
+            rooms[room].players = rooms[room].players.filter(p => p.id !== socket.id);
 
-            // quitar jugador
-            r.players = r.players.filter(p => p.id !== socket.id);
-            delete r.ready[socket.id];
-
-            // avisar al que quede
-            io.to(room).emit('waiting', { message: 'Un jugador se desconectó. Esperando rival...' });
-
-            // Si la sala queda vacía, limpiarla
-            if (r.players.length === 0) {
+            if (rooms[room].players.length === 0) {
                 delete rooms[room];
+            } else {
+                io.to(room).emit('waiting', { message: 'Tu oponente se desconectó. Esperando nuevo jugador...' });
             }
         }
     });
 });
 
-server.listen(PORT, () => {
-    console.log(`Servidor PVP corriendo en puerto ${PORT}`);
+server.listen(3000, () => {
+    console.log('Servidor corriendo en http://localhost:3000');
 });
