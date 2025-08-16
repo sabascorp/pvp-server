@@ -36,7 +36,6 @@ io.on('connection', (socket) => {
             // Comprobar si ambos están listos
             const allReady = rooms[room].players.every(p => rooms[room].ready[p.id]);
             if (allReady) {
-                // Emitir conteo sincronizado a ambos jugadores
                 io.to(room).emit('startCountdown', { message: '¡Ambos listos! Inicia el conteo...' });
 
                 // Reiniciar los ready para la siguiente partida
@@ -54,8 +53,19 @@ io.on('connection', (socket) => {
 
     socket.on('disconnect', () => {
         for (const room in rooms) {
-            rooms[room].players = rooms[room].players.filter(p => p.id !== socket.id);
-            delete rooms[room].ready[socket.id];
+            const roomData = rooms[room];
+            const player = roomData.players.find(p => p.id === socket.id);
+            if (player) {
+                // Quitar al jugador
+                roomData.players = roomData.players.filter(p => p.id !== socket.id);
+                delete roomData.ready[socket.id];
+
+                // Avisar a los demás jugadores
+                socket.to(room).emit('opponentLeft', { message: `${player.name} se ha desconectado.` });
+
+                // Eliminar la sala si quedó vacía
+                if (roomData.players.length === 0) delete rooms[room];
+            }
         }
     });
 
@@ -64,4 +74,5 @@ io.on('connection', (socket) => {
 server.listen(PORT, () => {
     console.log(`Servidor PVP corriendo en puerto ${PORT}`);
 });
+
 
