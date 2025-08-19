@@ -79,6 +79,12 @@ if (rooms[room].players.length === 2) {
 
 });
 
+socket.on('playerFinished', (data) => {
+    // Enviar los resultados completos al rival
+    socket.to(data.room).emit('rivalFinished', data);
+});
+
+
 server.listen(PORT, () => {
     console.log(`Servidor PVP corriendo en puerto ${PORT}`);
 });
