@@ -53,11 +53,15 @@ io.on('connection', (socket) => {
         }
     });
 
-    // ✅ Aquí afuera, no dentro de joinRoom
-    socket.on('sendResultsToRival', (data) => {
-        // Solo enviar al rival en la misma sala
-        socket.to(data.room).emit('receiveRivalResults', data.results);
+    // Enviar resultados al rival
+socket.on('sendResultsToRival', (data) => {
+    // data debe traer: { room, results, name }
+    socket.to(data.room).emit('receiveRivalResults', {
+        results: data.results,
+        name: data.name
     });
+});
+
 
     socket.on('updateStats', (data) => {
         // Enviar stats solo al rival
