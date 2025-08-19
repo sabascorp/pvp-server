@@ -21,12 +21,20 @@ io.on('connection', (socket) => {
         rooms[room].players.push({ id: socket.id, name: userName });
         rooms[room].ready[socket.id] = false;
 
-        // Avisar a los jugadores
-        if (rooms[room].players.length === 2) {
-            io.to(room).emit('waiting', { message: 'Ambos jugadores conectados. Esperando que estén listos...' });
-        } else {
-            io.to(socket.id).emit('waiting', { message: 'Esperando contrincante...' });
-        }
+       // Avisar a los jugadores
+if (rooms[room].players.length === 2) {
+    const [player1, player2] = rooms[room].players;
+
+    // Avisar a player1 sobre player2
+    io.to(player1.id).emit('waiting', { message: `Tu rival ${player2.name} está conectado, esperando inicio...` });
+
+    // Avisar a player2 sobre player1
+    io.to(player2.id).emit('waiting', { message: `Tu rival ${player1.name} está conectado, esperando inicio...` });
+
+} else {
+    socket.emit('waiting', { message: 'Esperando a que se conecte tu rival...' });
+}
+
     });
 
     socket.on('playerReady', ({ room }) => {
