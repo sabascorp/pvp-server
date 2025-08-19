@@ -20,21 +20,20 @@ io.on('connection', (socket) => {
         if (!rooms[room]) rooms[room] = { players: [], ready: {} };
         rooms[room].players.push({ id: socket.id, name: userName });
         rooms[room].ready[socket.id] = false;
+        
+        // Avisar a los jugadores
+        if (rooms[room].players.length === 2) {
+            const [player1, player2] = rooms[room].players;
 
-       // Avisar a los jugadores
-if (rooms[room].players.length === 2) {
-    const [player1, player2] = rooms[room].players;
+            // Avisar a player1 sobre player2
+            io.to(player1.id).emit('waiting', { message: `Tu rival ${player2.name} está conectado, esperando inicio...` });
 
-    // Avisar a player1 sobre player2
-    io.to(player1.id).emit('waiting', { message: `Tu rival ${player2.name} está conectado, esperando inicio...` });
+            // Avisar a player2 sobre player1
+            io.to(player2.id).emit('waiting', { message: `Tu rival ${player1.name} está conectado, esperando inicio...` });
 
-    // Avisar a player2 sobre player1
-    io.to(player2.id).emit('waiting', { message: `Tu rival ${player1.name} está conectado, esperando inicio...` });
-
-} else {
-    socket.emit('waiting', { message: 'Esperando a que se conecte tu rival...' });
-}
-
+        } else {
+            socket.emit('waiting', { message: 'Esperando a que se conecte tu rival...' });
+        }
     });
 
     socket.on('playerReady', ({ room }) => {
@@ -52,6 +51,12 @@ if (rooms[room].players.length === 2) {
                 }
             }
         }
+    });
+
+    // ✅ Aquí afuera, no dentro de joinRoom
+    socket.on('sendResultsToRival', (data) => {
+        // Solo enviar al rival en la misma sala
+        socket.to(data.room).emit('receiveRivalResults', data.results);
     });
 
     socket.on('updateStats', (data) => {
