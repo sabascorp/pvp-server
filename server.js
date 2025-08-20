@@ -4,93 +4,102 @@ const { Server } = require('socket.io');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: '*' } });
+const io = new Server(server, {
+    cors: { origin: '*' }
+});
 
 const PORT = process.env.PORT || 3000;
 
 // ===== 5 SALAS FIJAS =====
-const MAX_PLAYERS_PER_ROOM = 2;
-const FIXED_ROOMS = ['room1', 'room2', 'room3', 'room4', 'room5'];
-const rooms = {}; 
-// rooms = { roomId: { players: [{id: socketId, name: 'Usuario'}], ready: {socketId: true/false} } }
-
-// Inicializamos las 5 salas
-FIXED_ROOMS.forEach(r => {
-    rooms[r] = { players: [], ready: {} };
-});
+const rooms = {
+    room1: { players: [], ready: {} },
+    room2: { players: [], ready: {} },
+    room3: { players: [], ready: {} },
+    room4: { players: [], ready: {} },
+    room5: { players: [], ready: {} },
+};
 
 io.on('connection', (socket) => {
 
+    // ===== UNIRSE A UNA SALA =====
     socket.on('joinRoom', ({ userName }) => {
-        // Buscar la primera sala disponible
-        const availableRoom = FIXED_ROOMS.find(r => rooms[r].players.length < MAX_PLAYERS_PER_ROOM);
+        // Buscar primera sala con menos de 2 jugadores
+        let assignedRoom = null;
+        for (const room in rooms) {
+            if (rooms[room].players.length < 2) {
+                assignedRoom = room;
+                break;
+            }
+        }
 
-        if (!availableRoom) {
-            socket.emit('waiting', { message: 'Todas las salas están llenas. Intenta más tarde.' });
+        if (!assignedRoom) {
+            socket.emit('waiting', { message: 'Todas las salas están llenas. Espera un momento...', room: null });
             return;
         }
 
-        socket.join(availableRoom);
-        rooms[availableRoom].players.push({ id: socket.id, name: userName });
-        rooms[availableRoom].ready[socket.id] = false;
+        socket.join(assignedRoom);
+        rooms[assignedRoom].players.push({ id: socket.id, name: userName });
+        rooms[assignedRoom].ready[socket.id] = false;
 
-        // Avisar al jugador
-        if (rooms[availableRoom].players.length === 2) {
-            const [player1, player2] = rooms[availableRoom].players;
-            io.to(player1.id).emit('waiting', { message: `Tu rival ${player2.name} está conectado, esperando inicio...` });
-            io.to(player2.id).emit('waiting', { message: `Tu rival ${player1.name} está conectado, esperando inicio...` });
-        } else {
-            socket.emit('waiting', { message: 'Esperando a que se conecte tu rival...' });
-        }
+        // Avisar al jugador sobre su sala
+        socket.emit('waiting', { 
+            message: `Te has unido a ${assignedRoom}. Esperando rival...`,
+            room: assignedRoom 
+        });
 
-        // Guardar la sala asignada en el socket
-        socket.data.room = availableRoom;
-    });
-
-    socket.on('playerReady', () => {
-        const room = socket.data.room;
-        if (!room) return;
-
-        rooms[room].ready[socket.id] = true;
-
-        // Comprobar si ambos están listos
-        const allReady = rooms[room].players.every(p => rooms[room].ready[p.id]);
-        if (allReady) {
-            io.to(room).emit('startCountdown', { message: '¡Ambos listos! Inicia el conteo...' });
-
-            // Reiniciar ready para la siguiente partida
-            for (const id in rooms[room].ready) rooms[room].ready[id] = false;
+        // Avisar a los demás jugadores en la sala
+        if (rooms[assignedRoom].players.length === 2) {
+            const [player1, player2] = rooms[assignedRoom].players;
+            io.to(player1.id).emit('waiting', { message: `Tu rival ${player2.name} está conectado, esperando inicio...`, room: assignedRoom });
+            io.to(player2.id).emit('waiting', { message: `Tu rival ${player1.name} está conectado, esperando inicio...`, room: assignedRoom });
         }
     });
 
+    // ===== JUGADOR LISTO =====
+    socket.on('playerReady', ({ room }) => {
+        if (room && rooms[room]) {
+            rooms[room].ready[socket.id] = true;
+
+            const allReady = rooms[room].players.every(p => rooms[room].ready[p.id]);
+            if (allReady) {
+                io.to(room).emit('startCountdown', { message: '¡Ambos listos! Inicia el conteo...' });
+
+                // Reiniciar ready para próxima partida
+                for (const id in rooms[room].ready) {
+                    rooms[room].ready[id] = false;
+                }
+            }
+        }
+    });
+
+    // ===== ENVIAR RESULTADOS AL RIVAL =====
     socket.on('sendResultsToRival', (data) => {
-        const room = socket.data.room;
-        if (!room) return;
-        socket.to(room).emit('receiveRivalResults', {
+        // data: { room, results, name }
+        socket.to(data.room).emit('receiveRivalResults', {
             results: data.results,
             name: data.name
         });
     });
 
+    // ===== ACTUALIZAR ESTADÍSTICAS DEL RIVAL =====
     socket.on('updateStats', (data) => {
-        const room = socket.data.room;
-        if (!room) return;
-        socket.to(room).emit('opponentStats', { stats: data.stats, name: data.name });
+        socket.to(data.room).emit('opponentStats', { stats: data.stats, name: data.name });
     });
 
+    // ===== DESCONECTAR =====
     socket.on('disconnect', () => {
-        const room = socket.data.room;
-        if (!room || !rooms[room]) return;
+        for (const room in rooms) {
+            const roomData = rooms[room];
+            const player = roomData.players.find(p => p.id === socket.id);
+            if (player) {
+                roomData.players = roomData.players.filter(p => p.id !== socket.id);
+                delete roomData.ready[socket.id];
 
-        const player = rooms[room].players.find(p => p.id === socket.id);
-        if (player) {
-            rooms[room].players = rooms[room].players.filter(p => p.id !== socket.id);
-            delete rooms[room].ready[socket.id];
-
-            socket.to(room).emit('opponentLeft', { message: `${player.name} se ha desconectado.` });
+                // Avisar a los demás jugadores
+                socket.to(room).emit('opponentLeft', { message: `${player.name} se ha desconectado.` });
+            }
         }
     });
-
 });
 
 server.listen(PORT, () => {
